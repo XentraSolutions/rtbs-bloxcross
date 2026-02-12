@@ -9,7 +9,7 @@
     }
   },
   "profiles": {
-    "http": {
+    "Bloxcross": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,
