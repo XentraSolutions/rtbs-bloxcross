@@ -1,10 +1,9 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using MySqlConnector;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Xml;
 
 public class BloxService : IBloxService
 {
@@ -12,6 +11,10 @@ public class BloxService : IBloxService
     private readonly IBloxCredentialRepository _repository;
     private readonly IApiLogger _logger;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private static readonly JsonSerializerOptions SnakeCaseJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
     public BloxService(HttpClient httpClient,
                        IBloxCredentialRepository repository, IApiLogger logger, IHttpContextAccessor httpContextAccessor)
     {
@@ -69,7 +72,7 @@ public class BloxService : IBloxService
                   .AddressList.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?
                   .ToString() ?? "Unknown";
     }
-    public async Task<(bool Success, string? Response, string? ErrorMessage)> GetAsync(string path)
+    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)> GetAsync(string path)
     {
         string? content = null;
         string? error = null;
@@ -87,20 +90,20 @@ public class BloxService : IBloxService
             if (!response.IsSuccessStatusCode)
             {
                 error = $"Status: {response.StatusCode}, Response: {content}";
-                return (false, null, error);
+                return (false, (int)response.StatusCode, content, error);
             }
 
-            return (true, content, null);
+            return (true, (int)response.StatusCode, content, null);
         }
         catch (HttpRequestException httpEx)
         {
             error = $"HttpRequestException: {httpEx.Message}";
-            return (false, null, error);
+            return (false, 502, null, error);
         }
         catch (Exception ex)
         {
             error = $"Exception: {ex.Message}";
-            return (false, null, error);
+            return (false, 500, null, error);
         }
         finally
         {
@@ -118,7 +121,7 @@ public class BloxService : IBloxService
         }
     }
 
-    public async Task<(bool Success, string? Response, string? ErrorMessage)> PostAsync(string path, object body)
+    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)> PostAsync(string path, object body)
     {
         string? content = null;
         string? error = null;
@@ -131,7 +134,7 @@ public class BloxService : IBloxService
             await AddHeaders(request, "POST", path);
 
             request.Content = new StringContent(
-                JsonSerializer.Serialize(body),
+                JsonSerializer.Serialize(body, SnakeCaseJson),
                 Encoding.UTF8,
                 "application/json");
 
@@ -141,20 +144,20 @@ public class BloxService : IBloxService
             if (!response.IsSuccessStatusCode)
             {
                 error = $"Status: {response.StatusCode}, Response: {content}";
-                return (false, null, error);
+                return (false, (int)response.StatusCode, content, error);
             }
 
-            return (true, content, null);
+            return (true, (int)response.StatusCode, content, null);
         }
         catch (HttpRequestException httpEx)
         {
             error = $"HttpRequestException: {httpEx.Message}";
-            return (false, null, error);
+            return (false, 502, null, error);
         }
         catch (Exception ex)
         {
             error = $"Exception: {ex.Message}";
-            return (false, null, error);
+            return (false, 500, null, error);
         }
         finally
         {
@@ -163,6 +166,54 @@ public class BloxService : IBloxService
             {
                 MethodName = "POST " + path,
                 Parameters = body,
+                Response = string.IsNullOrWhiteSpace(content) ? error : content,
+                IpAddress = ipAddress,
+                TraceId = traceId
+            };
+
+            await _logger.LogAsync(logModel);
+        }
+    }
+
+    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)> DeleteAsync(string path)
+    {
+        string? content = null;
+        string? error = null;
+        var traceId = Guid.NewGuid().ToString();
+        string ipAddress = GetIpAddress();
+
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Delete, path);
+            await AddHeaders(request, "DELETE", path);
+
+            var response = await _httpClient.SendAsync(request);
+            content = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                error = $"Status: {response.StatusCode}, Response: {content}";
+                return (false, (int)response.StatusCode, content, error);
+            }
+
+            return (true, (int)response.StatusCode, content, null);
+        }
+        catch (HttpRequestException httpEx)
+        {
+            error = $"HttpRequestException: {httpEx.Message}";
+            return (false, 502, null, error);
+        }
+        catch (Exception ex)
+        {
+            error = $"Exception: {ex.Message}";
+            return (false, 500, null, error);
+        }
+        finally
+        {
+            var logModel = new ApiLogModel
+            {
+                MethodName = "DELETE " + path,
+                Parameters = null,
                 Response = string.IsNullOrWhiteSpace(content) ? error : content,
                 IpAddress = ipAddress,
                 TraceId = traceId

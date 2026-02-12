@@ -1,7 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
 using System.ComponentModel.DataAnnotations;
 
-[Table("api_log")]
+[Table("API_LOG")]
 public class ApiLog
 {
     [Key]
