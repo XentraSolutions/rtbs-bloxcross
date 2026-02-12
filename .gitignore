@@ -1,0 +1,11 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.vs/
+*.nupkg
+*.snk
+*.pdb
+.vscode/
+.env
