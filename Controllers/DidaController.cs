@@ -106,7 +106,7 @@ public class DidaController : ControllerBase
 
     private static IActionResult UpstreamContent((bool Success, int StatusCode, string? Response, string? ErrorMessage) result)
     {
-        if (!string.IsNullOrWhiteSpace(result.Response))
+        if (result.Response is not null)
         {
             return new ContentResult
             {
