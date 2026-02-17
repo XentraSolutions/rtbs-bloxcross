@@ -54,20 +54,17 @@ public class BloxService : IBloxService
 
         if (context != null)
         {
-            // 1️⃣ Try X-Forwarded-For header (proxies/gateway)
             var forwardedFor = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
             if (!string.IsNullOrEmpty(forwardedFor))
             {
                 return forwardedFor.Split(',')[0].Trim(); // first IP = real client
             }
 
-            // 2️⃣ Fallback to direct connection
             var remoteIp = context.Connection.RemoteIpAddress?.ToString();
             if (!string.IsNullOrEmpty(remoteIp))
                 return remoteIp;
         }
 
-        // 3️⃣ Fallback to server IP
         return Dns.GetHostEntry(Dns.GetHostName())
                   .AddressList.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?
                   .ToString() ?? "Unknown";
@@ -107,7 +104,6 @@ public class BloxService : IBloxService
         }
         finally
         {
-            // Log request + response
             var logModel = new ApiLogModel
             {
                 MethodName = "GET " + path,
@@ -161,7 +157,6 @@ public class BloxService : IBloxService
         }
         finally
         {
-            // Log request + response
             var logModel = new ApiLogModel
             {
                 MethodName = "POST " + path,

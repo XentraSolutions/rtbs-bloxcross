@@ -20,14 +20,14 @@ public class DidaController : ControllerBase
         return UpstreamContent(result);
     }
 
-    [HttpPost("new")]
+    [HttpPost("create")]
     public async Task<IActionResult> CreateDida([FromBody] CreateDidaRequest request)
     {
         var result = await _service.PostAsync("/accounts/dida_account/new", request);
         return UpstreamContent(result);
     }
 
-    [HttpDelete("account/{account}")]
+    [HttpDelete("disable/{account}")]
     public async Task<IActionResult> DisableDida([FromRoute] string account)
     {
         var result = await _service.DeleteAsync($"/accounts/dida_account/account/{account}");
