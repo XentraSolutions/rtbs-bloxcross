@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Rtbs.Bloxcross.Models;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 [ApiController]
@@ -104,44 +102,6 @@ public class DidaController : ControllerBase
     {
         var result = await _service.PostAsync("/accounts/dida_account/enable_local_rails", request);
         return UpstreamContent(result);
-    }
-    [HttpPost("/portfolio/get_portfolio_balances")]
-    public async Task<IActionResult> GetPortfolioBalances([FromBody] PortfolioGetBalancesRequest request)
-    {
-        var result = await _service.PostAsync("/portfolio/get_portfolio_balances", request);
-        return UpstreamContent(result);
-    }
-
-    [HttpGet("/portfolio/transactions/{transactionId}")]
-    public async Task<IActionResult> GetPortfolioTransaction([FromRoute] string transactionId)
-    {
-        var result = await _service.GetAsync($"/portfolio/transactions/{transactionId}");
-        return UpstreamContent(result);
-    }
-    [HttpGet("/portfolio/webhooks/eventTypes")]
-    public async Task<IActionResult> GetPortfolioWebhookEventTypes()
-    {
-        var headerError = ValidateRequiredHeaders();
-        if (headerError is not null) return headerError;
-
-        var result = await _service.GetAsync("/portfolio/webhooks/eventTypes");
-        return UpstreamContent(result);
-    }
-    private IActionResult? ValidateRequiredHeaders()
-    {
-        if (!Request.Headers.TryGetValue("X-API-KEY", out var apiKey) || string.IsNullOrWhiteSpace(apiKey))
-        {
-            var payload = JsonSerializer.Serialize(new { error = "Missing required header: X-API-KEY" });
-            return new ContentResult { StatusCode = 400, ContentType = "application/json", Content = payload };
-        }
-
-        if (!Request.Headers.TryGetValue("CLIENT_ID", out var clientId) || string.IsNullOrWhiteSpace(clientId))
-        {
-            var payload = JsonSerializer.Serialize(new { error = "Missing required header: CLIENT_ID" });
-            return new ContentResult { StatusCode = 400, ContentType = "application/json", Content = payload };
-        }
-
-        return null;
     }
 
     private static IActionResult UpstreamContent((bool Success, int StatusCode, string? Response, string? ErrorMessage) result)
