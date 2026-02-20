@@ -10,5 +10,5 @@ public class AppDbContext : DbContext
     public DbSet<BloxCredential> BloxCredentials => Set<BloxCredential>();
     public DbSet<ApiLog> ApiLogs => Set<ApiLog>();
     public DbSet<Deposit> Deposits => Set<Deposit>();
-
+    public DbSet<WebhookLog> WebhookLogs => Set<WebhookLog>();
 }
