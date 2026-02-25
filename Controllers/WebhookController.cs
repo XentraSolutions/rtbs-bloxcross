@@ -1,12 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Rtbs.Bloxcross.Data;
 using Rtbs.Bloxcross.Models;
-using System.IO;
-using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
-
-namespace Rtbs.Bloxcross.Controllers;
+using System.Text.Json;
 
 [ApiController]
 [Route("webhook")]
@@ -24,117 +21,74 @@ public class WebhookController : ControllerBase
     [HttpPost("receive")]
     public async Task<IActionResult> ReceiveWebhook()
     {
-        if (!Request.Headers.TryGetValue("CLIENT_ID", out var clientId) ||
-            !Request.Headers.TryGetValue("X-API-KEY", out var apiKey) ||
-            !Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampHeader) ||
-            !Request.Headers.TryGetValue("X-SIGNATURE", out var signatureHeader))
+        if (!TryGetWebhookHeaders(out var timestampHeader, out var signatureHeader))
         {
             return BadRequest(new { error = "Missing required webhook headers." });
         }
 
-        if (!long.TryParse(timestampHeader.ToString(), out var timestampMs))
+        if (!long.TryParse(timestampHeader, out _))
         {
             return BadRequest(new { error = "Invalid X-TIMESTAMP format." });
         }
 
-        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestampMs);
-        var now = DateTimeOffset.UtcNow;
-        if (Math.Abs((now - timestamp).TotalMinutes) > 5)
+        if (!IsTimestampWithinAllowedWindow(timestampHeader))
         {
             return Unauthorized(new { error = "Timestamp is outside the allowed window." });
         }
 
-        var urlPath = Request.Path + Request.QueryString;
-        var message = $"{timestampHeader}POST{urlPath}";
-
-        var secretConfig = _config["Webhook:SecretKey"]
-                           ?? _config["BLOXCROSS:SecretKey"]
-                           ?? _config["SECRET_KEY"]
-                           ?? _config["WebhookSecret"];
-
-        if (string.IsNullOrEmpty(secretConfig))
+        var secretConfig = GetSecretKey();
+        if (string.IsNullOrWhiteSpace(secretConfig))
         {
             return StatusCode(500, new { error = "Webhook secret is not configured." });
         }
 
         var key = GetKeyBytes(secretConfig);
-
-        byte[] expectedHash;
-        using (var hmac = new HMACSHA256(key))
-        {
-            expectedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
-        }
-
-        byte[] providedSig;
-        try
-        {
-            providedSig = ParseSignature(signatureHeader.ToString());
-        }
-        catch
-        {
-            return Unauthorized(new { error = "Invalid signature format." });
-        }
-
-        if (providedSig == null || providedSig.Length != expectedHash.Length ||
-            !CryptographicOperations.FixedTimeEquals(providedSig, expectedHash))
-        {
-            return Unauthorized(new { error = "Invalid signature." });
-        }
-
-        string body;
-        using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
-        {
-            body = await reader.ReadToEndAsync();
-        }
-
+        var body = await ReadRequestBodyAsync();
         if (string.IsNullOrWhiteSpace(body))
         {
             return BadRequest(new { error = "Empty request body." });
         }
 
+        if (!IsSignatureValid(timestampHeader, signatureHeader, key))
+        {
+            return Unauthorized(new { error = "Invalid signature." });
+        }
+
         try
         {
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("ivi", out var ivElem) || !root.TryGetProperty("payload", out var payloadElem))
+            var encrypted = JsonSerializer.Deserialize<WebhookEncryptedData>(body);
+            if (encrypted is null || string.IsNullOrWhiteSpace(encrypted.Iv) || string.IsNullOrWhiteSpace(encrypted.Payload))
             {
                 return BadRequest(new { error = "Missing iv or payload in body." });
             }
 
-            var ivB64 = ivElem.GetString();
-            var payloadB64 = payloadElem.GetString();
-
-            if (string.IsNullOrEmpty(ivB64) || string.IsNullOrEmpty(payloadB64))
+            var decryptedPayload = DecryptPayload(encrypted.Iv, encrypted.Payload, key);
+            var webhookEvent = JsonSerializer.Deserialize<WebhookEvent>(decryptedPayload);
+            if (webhookEvent is null)
             {
-                return BadRequest(new { error = "iv or payload is empty." });
+                return BadRequest(new { error = "Invalid decrypted webhook payload." });
             }
 
-            var iv = Convert.FromBase64String(ivB64);
-            var ciphertextWithTag = Convert.FromBase64String(payloadB64);
-
-            const int TagLength = 16;
-            if (ciphertextWithTag.Length < TagLength)
+            var log = new WebhookLog
             {
-                return BadRequest(new { error = "Payload is too short to contain a GCM tag." });
-            }
+                EventType = webhookEvent.EventType,
+                TransactionId = webhookEvent.TransactionId.ToString(),
+                PortfolioId = webhookEvent.PortfolioId,
+                Amount = webhookEvent.Quantity,
+                Currency = webhookEvent.BaseCurrency,
+                Status = webhookEvent.Status,
+                RawPayload = decryptedPayload,
+                ReceivedAt = DateTime.UtcNow
+            };
 
-            var tag = ciphertextWithTag[^TagLength..];
-            var ciphertext = ciphertextWithTag[..^TagLength];
-            var plaintext = new byte[ciphertext.Length];
+            _context.WebhookLogs.Add(log);
+            await _context.SaveChangesAsync();
 
-            if (key.Length != 16 && key.Length != 24 && key.Length != 32)
-            {
-                using var sha = SHA256.Create();
-                key = sha.ComputeHash(key);
-            }
-
-            using var aes = new AesGcm(key);
-            aes.Decrypt(iv, ciphertext, tag, plaintext);
-
-            var decrypted = Encoding.UTF8.GetString(plaintext);
-
-            return Ok(new { success = true });
+            return Ok(new { success = true, id = log.Id });
+        }
+        catch (FormatException)
+        {
+            return BadRequest(new { error = "Invalid base64 payload format." });
         }
         catch (CryptographicException)
         {
@@ -144,45 +98,109 @@ public class WebhookController : ControllerBase
         {
             return BadRequest(new { error = "Invalid JSON payload." });
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            return StatusCode(500, new { error = "Internal server error", detail = ex.Message });
+            return StatusCode(500, new { error = ex.Message });
         }
     }
 
-
-    [HttpPost("callback")]
-    public async Task<IActionResult> Callback([FromBody] WebhookEvent @event)
+    private bool TryGetWebhookHeaders(out string timestampHeader, out string signatureHeader)
     {
-        if (@event is null)
-            return BadRequest(new { error = "Missing or invalid body." });
+        timestampHeader = string.Empty;
+        signatureHeader = string.Empty;
 
-        var log = new WebhookLog
+        if (!Request.Headers.TryGetValue("CLIENT_ID", out _) ||
+            !Request.Headers.TryGetValue("X-API-KEY", out _) ||
+            !Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampValue) ||
+            !Request.Headers.TryGetValue("X-SIGNATURE", out var signatureValue))
         {
-            EventType = @event.EventType,
-            TransactionId = @event.TransactionId.ToString(),
-            PortfolioId = @event.PortfolioId,
-            Amount = @event.Quantity,
-            Currency = @event.BaseCurrency,
-            Status = @event.Status,
-            RawPayload = JsonSerializer.Serialize(@event),
-            ReceivedAt = DateTime.UtcNow
-        };
+            return false;
+        }
 
-        _context.WebhookLogs.Add(log);
-        await _context.SaveChangesAsync();
-
-        return Ok(new { success = true, id = log.Id });
+        timestampHeader = timestampValue.ToString();
+        signatureHeader = signatureValue.ToString();
+        return true;
     }
 
-    #region Helpers
+    private static bool IsTimestampWithinAllowedWindow(string timestampHeader)
+    {
+        _ = long.TryParse(timestampHeader, out var timestampMs);
+        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestampMs);
+        return Math.Abs((DateTimeOffset.UtcNow - timestamp).TotalMinutes) <= 5;
+    }
+
+    private string? GetSecretKey()
+    {
+        return _config["Webhook:SecretKey"]
+               ?? _config["BLOXCROSS:SecretKey"]
+               ?? _config["SECRET_KEY"]
+               ?? _config["WebhookSecret"];
+    }
+
+    private async Task<string> ReadRequestBodyAsync()
+    {
+        using var reader = new StreamReader(Request.Body, Encoding.UTF8);
+        return await reader.ReadToEndAsync();
+    }
+
+    private bool IsSignatureValid(string timestampHeader, string signatureHeader, byte[] key)
+    {
+        var message = $"{timestampHeader}POST{Request.Path}{Request.QueryString}";
+        byte[] expectedHash;
+        using (var hmac = new HMACSHA256(key))
+        {
+            expectedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
+        }
+
+        byte[] providedSig;
+        try
+        {
+            providedSig = ParseSignature(signatureHeader);
+        }
+        catch
+        {
+            return false;
+        }
+
+        return providedSig.Length == expectedHash.Length &&
+               CryptographicOperations.FixedTimeEquals(providedSig, expectedHash);
+    }
+
+    private static string DecryptPayload(string ivB64, string payloadB64, byte[] key)
+    {
+        var iv = Convert.FromBase64String(ivB64);
+        var ciphertextWithTag = Convert.FromBase64String(payloadB64);
+
+        const int tagLength = 16;
+        if (ciphertextWithTag.Length < tagLength)
+        {
+            throw new FormatException("Payload is too short to contain a GCM tag.");
+        }
+
+        var tag = ciphertextWithTag[^tagLength..];
+        var ciphertext = ciphertextWithTag[..^tagLength];
+        var plaintext = new byte[ciphertext.Length];
+
+        if (key.Length != 16 && key.Length != 24 && key.Length != 32)
+        {
+            throw new InvalidOperationException("Webhook secret key length must be 16, 24, or 32 bytes for AES-GCM decryption.");
+        }
+
+        using var aes = new AesGcm(key, tagLength);
+        aes.Decrypt(iv, ciphertext, tag, plaintext);
+
+        return Encoding.UTF8.GetString(plaintext);
+    }
+
     private static byte[] ParseSignature(string signature)
     {
         try
         {
             return Convert.FromBase64String(signature);
         }
-        catch { }
+        catch
+        {
+        }
 
         if (IsHexString(signature))
         {
@@ -194,14 +212,22 @@ public class WebhookController : ControllerBase
 
     private static bool IsHexString(string input)
     {
-        if (string.IsNullOrEmpty(input) || (input.Length % 2) != 0) return false;
+        if (string.IsNullOrEmpty(input) || input.Length % 2 != 0)
+        {
+            return false;
+        }
+
         foreach (var c in input)
         {
             var isHex = (c >= '0' && c <= '9') ||
                         (c >= 'a' && c <= 'f') ||
                         (c >= 'A' && c <= 'F');
-            if (!isHex) return false;
+            if (!isHex)
+            {
+                return false;
+            }
         }
+
         return true;
     }
 
@@ -209,10 +235,11 @@ public class WebhookController : ControllerBase
     {
         var len = hex.Length / 2;
         var bytes = new byte[len];
-        for (int i = 0; i < len; i++)
+        for (var i = 0; i < len; i++)
         {
             bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
         }
+
         return bytes;
     }
 
@@ -221,20 +248,27 @@ public class WebhookController : ControllerBase
         try
         {
             var b = Convert.FromBase64String(secret);
-            if (b.Length > 0) return b;
+            if (b.Length > 0)
+            {
+                return b;
+            }
         }
-        catch { }
+        catch
+        {
+        }
 
         if (IsHexString(secret))
         {
-            try { return HexToBytes(secret); } catch { }
+            try
+            {
+                return HexToBytes(secret);
+            }
+            catch
+            {
+            }
         }
 
         var utf = Encoding.UTF8.GetBytes(secret);
-        if (utf.Length == 16 || utf.Length == 24 || utf.Length == 32) return utf;
-
-        using var sha = SHA256.Create();
-        return sha.ComputeHash(utf);
+        return utf;
     }
-    #endregion
 }
