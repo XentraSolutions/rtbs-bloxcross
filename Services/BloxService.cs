@@ -69,7 +69,8 @@ public class BloxService : IBloxService
                   .AddressList.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?
                   .ToString() ?? "Unknown";
     }
-    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)> GetAsync(string path)
+    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)>
+    SendAsync(HttpMethod method, string path, object? body = null)
     {
         string? content = null;
         string? error = null;
@@ -78,8 +79,17 @@ public class BloxService : IBloxService
 
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, path);
-            await AddHeaders(request, "GET", path);
+            var request = new HttpRequestMessage(method, path);
+            await AddHeaders(request, method.Method, path);
+
+            // Attach body only if present (POST/PUT/PATCH etc.)
+            if (body != null)
+            {
+                request.Content = new StringContent(
+                    JsonSerializer.Serialize(body, SnakeCaseJson),
+                    Encoding.UTF8,
+                    "application/json");
+            }
 
             var response = await _httpClient.SendAsync(request);
             content = await response.Content.ReadAsStringAsync();
@@ -106,60 +116,7 @@ public class BloxService : IBloxService
         {
             var logModel = new ApiLogModel
             {
-                MethodName = "GET " + path,
-                Parameters = null,  // GET has no body
-                Response = string.IsNullOrWhiteSpace(content) ? error : content,
-                IpAddress = ipAddress,
-                TraceId = traceId
-            };
-
-            await _logger.LogAsync(logModel);
-        }
-    }
-
-    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)> PostAsync(string path, object body)
-    {
-        string? content = null;
-        string? error = null;
-        var traceId = Guid.NewGuid().ToString();
-        string ipAddress = GetIpAddress();
-
-        try
-        {
-            var request = new HttpRequestMessage(HttpMethod.Post, path);
-            await AddHeaders(request, "POST", path);
-
-            request.Content = new StringContent(
-                JsonSerializer.Serialize(body, SnakeCaseJson),
-                Encoding.UTF8,
-                "application/json");
-
-            var response = await _httpClient.SendAsync(request);
-            content = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                error = $"Status: {response.StatusCode}, Response: {content}";
-                return (false, (int)response.StatusCode, content, error);
-            }
-
-            return (true, (int)response.StatusCode, content, null);
-        }
-        catch (HttpRequestException httpEx)
-        {
-            error = $"HttpRequestException: {httpEx.Message}";
-            return (false, 502, null, error);
-        }
-        catch (Exception ex)
-        {
-            error = $"Exception: {ex.Message}";
-            return (false, 500, null, error);
-        }
-        finally
-        {
-            var logModel = new ApiLogModel
-            {
-                MethodName = "POST " + path,
+                MethodName = $"{method.Method} {path}",
                 Parameters = body,
                 Response = string.IsNullOrWhiteSpace(content) ? error : content,
                 IpAddress = ipAddress,
@@ -169,52 +126,13 @@ public class BloxService : IBloxService
             await _logger.LogAsync(logModel);
         }
     }
+    public Task<(bool, int, string?, string?)> GetAsync(string path)
+        => SendAsync(HttpMethod.Get, path);
 
-    public async Task<(bool Success, int StatusCode, string? Response, string? ErrorMessage)> DeleteAsync(string path)
-    {
-        string? content = null;
-        string? error = null;
-        var traceId = Guid.NewGuid().ToString();
-        string ipAddress = GetIpAddress();
+    public Task<(bool, int, string?, string?)> PostAsync(string path, object body)
+        => SendAsync(HttpMethod.Post, path, body);
 
-        try
-        {
-            var request = new HttpRequestMessage(HttpMethod.Delete, path);
-            await AddHeaders(request, "DELETE", path);
+    public Task<(bool, int, string?, string?)> DeleteAsync(string path)
+        => SendAsync(HttpMethod.Delete, path);
 
-            var response = await _httpClient.SendAsync(request);
-            content = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                error = $"Status: {response.StatusCode}, Response: {content}";
-                return (false, (int)response.StatusCode, content, error);
-            }
-
-            return (true, (int)response.StatusCode, content, null);
-        }
-        catch (HttpRequestException httpEx)
-        {
-            error = $"HttpRequestException: {httpEx.Message}";
-            return (false, 502, null, error);
-        }
-        catch (Exception ex)
-        {
-            error = $"Exception: {ex.Message}";
-            return (false, 500, null, error);
-        }
-        finally
-        {
-            var logModel = new ApiLogModel
-            {
-                MethodName = "DELETE " + path,
-                Parameters = null,
-                Response = string.IsNullOrWhiteSpace(content) ? error : content,
-                IpAddress = ipAddress,
-                TraceId = traceId
-            };
-
-            await _logger.LogAsync(logModel);
-        }
-    }
 }
