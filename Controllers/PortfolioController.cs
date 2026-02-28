@@ -3,7 +3,7 @@ using Rtbs.Bloxcross.Models;
 using System.Text.Json;
 
 [ApiController]
-[Route("portfolio")]
+[Route("api/[controller]")]
 public class PortfolioController : ControllerBase
 {
     private readonly IBloxService _service;

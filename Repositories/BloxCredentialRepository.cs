@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Rtbs.Bloxcross.Data;
 
@@ -17,9 +17,9 @@ public class BloxCredentialRepository : IBloxCredentialRepository
         _cache = cache;
     }
 
-    public async Task<(string BaseUrl, string ClientId, string ApiKey)> GetActiveAsync()
+    public async Task<(string BaseUrl, string ClientId, string ApiKey, string SecretKey)> GetActiveAsync()
     {
-        if (_cache.TryGetValue(CACHE_KEY, out (string, string, string) cached))
+        if (_cache.TryGetValue(CACHE_KEY, out (string, string, string, string) cached))
             return cached;
 
         var credential = await _context.BloxCredentials
@@ -27,7 +27,7 @@ public class BloxCredentialRepository : IBloxCredentialRepository
             .FirstOrDefaultAsync()
             ?? throw new Exception("No active Blox credential found.");
 
-        var result = (credential.BaseUrl, credential.ClientId, credential.ApiKey);
+        var result = (credential.BaseUrl, credential.ClientId, credential.ApiKey, credential.SecretKey);
 
         _cache.Set(CACHE_KEY, result, TimeSpan.FromMinutes(10));
 

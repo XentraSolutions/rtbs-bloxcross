@@ -3,7 +3,7 @@ using Rtbs.Bloxcross.Models;
 using System.Text.Json;
 
 [ApiController]
-[Route("dida_account")]
+[Route("api/[controller]")]
 public class DidaController : ControllerBase
 {
     private readonly IBloxService _service;

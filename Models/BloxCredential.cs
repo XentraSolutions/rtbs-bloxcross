@@ -19,6 +19,8 @@ public class BloxCredential
 
     [Column("API_KEY")]
     public string ApiKey { get; set; } = string.Empty;
+    [Column("SECRET_KEY")]
+    public string SecretKey { get; set; } = string.Empty;
 
     [Column("IS_ACTIVE")]
     public bool IsActive { get; set; }

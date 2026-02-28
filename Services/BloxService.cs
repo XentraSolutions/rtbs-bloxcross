@@ -24,11 +24,11 @@ public class BloxService : IBloxService
         _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
     }
 
-    private string GenerateSignature(string apiKey, string timestamp, string method, string path)
+    private string GenerateSignature(string secretKey, string timestamp, string method, string path)
     {
         var message = $"{timestamp}{method.ToUpper()}{path}";
 
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiKey));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secretKey));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
 
         return Convert.ToHexString(hash).ToLower();
@@ -41,7 +41,7 @@ public class BloxService : IBloxService
         _httpClient.BaseAddress = new Uri(credential.BaseUrl);
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
-        var signature = GenerateSignature(credential.ApiKey, timestamp, method, path);
+        var signature = GenerateSignature(credential.SecretKey, timestamp, method, path);
 
         request.Headers.Add("CLIENT_ID", credential.ClientId);
         request.Headers.Add("X-API-KEY", credential.ApiKey);

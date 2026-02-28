@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 
 [ApiController]
-[Route("webhook")]
+[Route("api/[controller]")]
 public class WebhookController : ControllerBase
 {
     private readonly IConfiguration _config;
