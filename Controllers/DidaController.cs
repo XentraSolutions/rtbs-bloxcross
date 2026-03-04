@@ -104,7 +104,7 @@ public class DidaController : ControllerBase
         return UpstreamContent(result);
     }
 
-    private static IActionResult UpstreamContent((bool Success, int StatusCode, string? Response, string? ErrorMessage) result)
+    public static IActionResult UpstreamContent((bool Success, int StatusCode, string? Response, string? ErrorMessage) result)
     {
         if (result.Response is not null)
         {
