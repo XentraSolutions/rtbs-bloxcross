@@ -31,11 +31,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         ServerVersion.AutoDetect(connectionString)
     ));
 
-
 builder.Services.AddMemoryCache();
 
 builder.Services.AddScoped<IApiLogger, ApiLogger>();
 builder.Services.AddScoped<IBloxCredentialRepository, BloxCredentialRepository>();
+builder.Services.AddScoped<IWebhookService, WebhookService>();
 
 builder.Services.AddHttpClient<IBloxService, BloxService>();
 builder.Services.AddHttpContextAccessor();
