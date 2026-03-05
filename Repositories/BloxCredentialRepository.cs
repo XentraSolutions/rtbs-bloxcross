@@ -27,7 +27,11 @@ public class BloxCredentialRepository : IBloxCredentialRepository
             .FirstOrDefaultAsync()
             ?? throw new Exception("No active Blox credential found.");
 
-        var result = (credential.BaseUrl, credential.ClientId, credential.ApiKey, credential.SecretKey);
+        var result = (
+            credential.BaseUrl.Trim(),
+            credential.ClientId.Trim(),
+            credential.ApiKey.Trim(),
+            credential.SecretKey.Trim());
 
         _cache.Set(CACHE_KEY, result, TimeSpan.FromMinutes(10));
 

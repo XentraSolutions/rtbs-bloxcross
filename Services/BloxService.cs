@@ -26,12 +26,69 @@ public class BloxService : IBloxService
 
     private string GenerateSignature(string secretKey, string timestamp, string method, string path)
     {
-        var message = $"{timestamp}{method.ToUpper()}{path}";
+        var message = $"{timestamp}{method.ToUpperInvariant()}{path}";
+        var keyBytes = GetKeyBytes(secretKey);
 
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secretKey));
+        using var hmac = new HMACSHA256(keyBytes);
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
 
-        return Convert.ToHexString(hash).ToLower();
+        return Convert.ToBase64String(hash);
+    }
+
+    private static byte[] GetKeyBytes(string secret)
+    {
+        var normalized = secret.Trim();
+        try
+        {
+            var base64 = Convert.FromBase64String(normalized);
+            if (base64.Length > 0)
+            {
+                return base64;
+            }
+        }
+        catch
+        {
+        }
+
+        if (IsHexString(normalized))
+        {
+            return HexToBytes(normalized);
+        }
+
+        return Encoding.UTF8.GetBytes(normalized);
+    }
+
+    private static bool IsHexString(string input)
+    {
+        if (string.IsNullOrEmpty(input) || input.Length % 2 != 0)
+        {
+            return false;
+        }
+
+        foreach (var c in input)
+        {
+            var isHex = (c >= '0' && c <= '9') ||
+                        (c >= 'a' && c <= 'f') ||
+                        (c >= 'A' && c <= 'F');
+            if (!isHex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static byte[] HexToBytes(string hex)
+    {
+        var len = hex.Length / 2;
+        var bytes = new byte[len];
+        for (var i = 0; i < len; i++)
+        {
+            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+        }
+
+        return bytes;
     }
 
     private async Task AddHeaders(HttpRequestMessage request, string method, string path)
