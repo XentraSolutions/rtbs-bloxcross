@@ -212,9 +212,7 @@ public class WebhookService : IWebhookService
         timestampHeader = string.Empty;
         signatureHeader = string.Empty;
 
-        if (!context.Request.Headers.TryGetValue("CLIENT_ID", out _) ||
-            !context.Request.Headers.TryGetValue("X-API-KEY", out _) ||
-            !context.Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampValue) ||
+        if (!context.Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampValue) ||
             !context.Request.Headers.TryGetValue("X-SIGNATURE", out var signatureValue))
         {
             return false;
@@ -257,7 +255,7 @@ public class WebhookService : IWebhookService
 
     private bool IsSignatureValid(HttpContext context, string timestampHeader, string signatureHeader, byte[] key)
     {
-        var message = $"{timestampHeader}POST{context.Request.Path}{context.Request.QueryString}";
+        var message = $"{timestampHeader}{context.Request.Method.ToUpperInvariant()}{context.Request.Path}";
         byte[] expectedHash;
         using (var hmac = new HMACSHA256(key))
         {
