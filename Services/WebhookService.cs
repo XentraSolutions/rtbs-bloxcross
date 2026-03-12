@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Rtbs.Bloxcross.Data;
 using Rtbs.Bloxcross.Models;
 using System.Security.Cryptography;
@@ -61,18 +62,30 @@ public class WebhookService : IWebhookService
             };
         }
 
-        var secretConfig = GetSecretKey();
-        if (string.IsNullOrWhiteSpace(secretConfig))
+        var signatureSecretConfig = GetSignatureSecretKey();
+        if (string.IsNullOrWhiteSpace(signatureSecretConfig))
         {
             return new WebhookValidationResult
             {
                 IsValid = false,
-                ErrorMessage = "Webhook secret is not configured.",
+                ErrorMessage = "Webhook signature secret is not configured.",
                 StatusCode = 500
             };
         }
 
-        var key = GetKeyBytes(secretConfig);
+        var decryptSecretConfig = GetDecryptSecretKey(signatureSecretConfig);
+        if (string.IsNullOrWhiteSpace(decryptSecretConfig))
+        {
+            return new WebhookValidationResult
+            {
+                IsValid = false,
+                ErrorMessage = "Webhook decrypt secret is not configured.",
+                StatusCode = 500
+            };
+        }
+
+        var signatureKey = GetKeyBytes(signatureSecretConfig);
+        var decryptKey = GetKeyBytes(decryptSecretConfig);
         var body = await ReadRequestBodyAsync(context);
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -84,7 +97,7 @@ public class WebhookService : IWebhookService
             };
         }
 
-        if (!IsSignatureValid(context, timestampHeader, signatureHeader, key))
+        if (!IsSignatureValid(context, timestampHeader, signatureHeader, signatureKey))
         {
             return new WebhookValidationResult
             {
@@ -107,7 +120,7 @@ public class WebhookService : IWebhookService
                 };
             }
 
-            var decryptedPayload = DecryptPayload(encrypted.Iv, encrypted.Payload, key);
+            var decryptedPayload = DecryptPayload(encrypted.Iv, encrypted.Payload, decryptKey);
             var webhookEvent = JsonSerializer.Deserialize<WebhookEvent>(decryptedPayload);
             if (webhookEvent is null)
             {
@@ -119,10 +132,25 @@ public class WebhookService : IWebhookService
                 };
             }
 
+            var transactionId = webhookEvent.TransactionId.ToString();
+            var duplicateExists = await _context.WebhookLogs.AnyAsync(x =>
+                x.TransactionId == transactionId &&
+                x.EventType == webhookEvent.EventType &&
+                x.Status == webhookEvent.Status);
+            if (duplicateExists)
+            {
+                return new WebhookValidationResult
+                {
+                    IsValid = true,
+                    IsDuplicate = true,
+                    StatusCode = 200
+                };
+            }
+
             var log = new WebhookLog
             {
                 EventType = webhookEvent.EventType,
-                TransactionId = webhookEvent.TransactionId.ToString(),
+                TransactionId = transactionId,
                 PortfolioId = webhookEvent.PortfolioId,
                 Amount = webhookEvent.Quantity,
                 Currency = webhookEvent.BaseCurrency,
@@ -184,9 +212,7 @@ public class WebhookService : IWebhookService
         timestampHeader = string.Empty;
         signatureHeader = string.Empty;
 
-        if (!context.Request.Headers.TryGetValue("CLIENT_ID", out _) ||
-            !context.Request.Headers.TryGetValue("X-API-KEY", out _) ||
-            !context.Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampValue) ||
+        if (!context.Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampValue) ||
             !context.Request.Headers.TryGetValue("X-SIGNATURE", out var signatureValue))
         {
             return false;
@@ -204,12 +230,21 @@ public class WebhookService : IWebhookService
         return Math.Abs((DateTimeOffset.UtcNow - timestamp).TotalMinutes) <= 5;
     }
 
-    private string? GetSecretKey()
+    private string? GetSignatureSecretKey()
     {
         return _config["Webhook:SecretKey"]
                ?? _config["BLOXCROSS:SecretKey"]
                ?? _config["SECRET_KEY"]
                ?? _config["WebhookSecret"];
+    }
+
+    private string? GetDecryptSecretKey(string? fallbackSignatureSecret)
+    {
+        return _config["Webhook:DecryptSecretKey"]
+               ?? _config["BLOXCROSS:DecryptSecretKey"]
+               ?? _config["SECRET_KEY_DECRYPT"]
+               ?? _config["WebhookDecryptSecret"]
+               ?? fallbackSignatureSecret;
     }
 
     private async Task<string> ReadRequestBodyAsync(HttpContext context)
@@ -220,7 +255,7 @@ public class WebhookService : IWebhookService
 
     private bool IsSignatureValid(HttpContext context, string timestampHeader, string signatureHeader, byte[] key)
     {
-        var message = $"{timestampHeader}POST{context.Request.Path}{context.Request.QueryString}";
+        var message = $"{timestampHeader}{context.Request.Method.ToUpperInvariant()}{context.Request.Path}";
         byte[] expectedHash;
         using (var hmac = new HMACSHA256(key))
         {
@@ -320,9 +355,10 @@ public class WebhookService : IWebhookService
 
     private static byte[] GetKeyBytes(string secret)
     {
+        var normalized = secret.Trim();
         try
         {
-            var b = Convert.FromBase64String(secret);
+            var b = Convert.FromBase64String(normalized);
             if (b.Length > 0)
             {
                 return b;
@@ -332,18 +368,18 @@ public class WebhookService : IWebhookService
         {
         }
 
-        if (IsHexString(secret))
+        if (IsHexString(normalized))
         {
             try
             {
-                return HexToBytes(secret);
+                return HexToBytes(normalized);
             }
             catch
             {
             }
         }
 
-        var utf = Encoding.UTF8.GetBytes(secret);
+        var utf = Encoding.UTF8.GetBytes(normalized);
         return utf;
     }
 }

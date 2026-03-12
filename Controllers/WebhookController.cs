@@ -23,6 +23,16 @@ public class WebhookController : ControllerBase
     {
         if (result.IsValid)
         {
+            if (result.IsDuplicate)
+            {
+                return new ContentResult
+                {
+                    StatusCode = result.StatusCode,
+                    ContentType = "application/json",
+                    Content = JsonSerializer.Serialize(new { success = true, duplicate = true })
+                };
+            }
+
             return new ContentResult
             {
                 StatusCode = result.StatusCode,

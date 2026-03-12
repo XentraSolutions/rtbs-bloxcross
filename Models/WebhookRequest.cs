@@ -5,7 +5,13 @@ namespace Rtbs.Bloxcross.Models;
 public class WebhookEncryptedData
 {
     [JsonPropertyName("ivi")]
-    public string Iv { get; set; } = string.Empty;
+    public string? Ivi { get; set; }
+
+    [JsonPropertyName("iv")]
+    public string? IvRaw { get; set; }
+
+    [JsonIgnore]
+    public string Iv => string.IsNullOrWhiteSpace(Ivi) ? (IvRaw ?? string.Empty) : Ivi;
 
     [JsonPropertyName("payload")]
     public string Payload { get; set; } = string.Empty;
