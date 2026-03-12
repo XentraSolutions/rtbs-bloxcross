@@ -24,14 +24,17 @@ public class BloxService : IBloxService
         _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
     }
 
-    private string GenerateSignature(string secretKey, string timestamp, string method, string path)
+    private static string GenerateSignature(string base64SecretKey, string timestamp, string method, string path)
     {
-        var message = $"{timestamp}{method.ToUpper()}{path}";
+        var message = $"{timestamp}{method}{path}";
 
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secretKey));
+        var keyBytes = Convert.FromBase64String(base64SecretKey);
+
+        using var hmac = new HMACSHA256(keyBytes);
+
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
 
-        return Convert.ToHexString(hash).ToLower();
+        return Convert.ToBase64String(hash);
     }
 
     private async Task AddHeaders(HttpRequestMessage request, string method, string path)
@@ -41,12 +44,19 @@ public class BloxService : IBloxService
         _httpClient.BaseAddress = new Uri(credential.BaseUrl);
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
-        var signature = GenerateSignature(credential.SecretKey, timestamp, method, path);
+
+        var signature = GenerateSignature(
+            credential.SecretKey,
+            timestamp,
+            method.ToUpper(),
+            path
+        );
 
         request.Headers.Add("CLIENT_ID", credential.ClientId);
         request.Headers.Add("X-API-KEY", credential.ApiKey);
         request.Headers.Add("X-TIMESTAMP", timestamp);
         request.Headers.Add("X-SIGNATURE", signature);
+
     }
     private string GetIpAddress()
     {
@@ -134,5 +144,4 @@ public class BloxService : IBloxService
 
     public Task<(bool, int, string?, string?)> DeleteAsync(string path)
         => SendAsync(HttpMethod.Delete, path);
-
 }
