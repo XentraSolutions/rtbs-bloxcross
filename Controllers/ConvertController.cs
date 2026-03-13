@@ -17,35 +17,13 @@ public class ConvertController : ControllerBase
     public async Task<IActionResult> ConvertEstimate([FromBody] ConvertEstimateRequest request)
     {
         var result = await _service.PostAsync("/portfolio/swap/convert_estimate", request);
-        return UpstreamContent(result);
+        return ApiResponseFactory.FromUpstream(result);
     }
 
     [HttpPost("convert_estimate_reverse")]
     public async Task<IActionResult> ConvertEstimateReverse([FromBody] ConvertEstimateReverseRequest request)
     {
         var result = await _service.PostAsync("/portfolio/swap/convert_estimate_reverse", request);
-        return UpstreamContent(result);
-    }
-
-    private static IActionResult UpstreamContent((bool Success, int StatusCode, string? Response, string? ErrorMessage) result)
-    {
-        if (result.Response is not null)
-        {
-            return new ContentResult
-            {
-                StatusCode = result.StatusCode,
-                ContentType = "application/json",
-                Content = result.Response
-            };
-        }
-
-        var payload = JsonSerializer.Serialize(new { error = result.ErrorMessage ?? "Upstream request failed." });
-
-        return new ContentResult
-        {
-            StatusCode = result.StatusCode,
-            ContentType = "application/json",
-            Content = payload
-        };
+        return ApiResponseFactory.FromUpstream(result);
     }
 }

@@ -106,23 +106,6 @@ public class DidaController : ControllerBase
 
     public static IActionResult UpstreamContent((bool Success, int StatusCode, string? Response, string? ErrorMessage) result)
     {
-        if (result.Response is not null)
-        {
-            return new ContentResult
-            {
-                StatusCode = result.StatusCode,
-                ContentType = "application/json",
-                Content = result.Response
-            };
-        }
-
-        var payload = JsonSerializer.Serialize(new { error = result.ErrorMessage ?? "Upstream request failed." });
-
-        return new ContentResult
-        {
-            StatusCode = result.StatusCode,
-            ContentType = "application/json",
-            Content = payload
-        };
+        return ApiResponseFactory.FromUpstream(result);
     }
 }
