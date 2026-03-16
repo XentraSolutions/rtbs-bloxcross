@@ -14,42 +14,41 @@ public class VendorController : ControllerBase
         _service = service;
     }
 
-    [HttpPost("/vendors/new_vendor")]
+    [HttpPost("new_vendor")]
     public async Task<IActionResult> CreateVendor([FromBody] CreateVendorRequest request)
     {
-        var result = await _service.PostAsync("/vendors/new_vendors", request);
+        var result = await _service.PostAsync("/vendors/new_vendor", request);
         return ApiResponseFactory.FromUpstream(result);
     }
 
-    [HttpPost("/vendors/update_vendor/{{clientVendorId}}")]
-    public async Task<IActionResult> UpdateVendor([FromBody] UpdateVendorRequest request)
+    [HttpPost("update_vendor/{clientVendorId}")]
+    public async Task<IActionResult> UpdateVendor(string clientVendorId, [FromBody] UpdateVendorRequest request)
     {
-        var result = await _service.PostAsync("/vendors/update_vendor/{{clientVendorId}}", request);
+        var result = await _service.PostAsync($"/vendors/update_vendor/{clientVendorId}", request);
         return ApiResponseFactory.FromUpstream(result);
     }
 
-    [HttpPost("/payments/all_vendor_payment_methods")]
-    public async Task<IActionResult> GetPaymentMethods([FromQuery] VendorPaymentMethodsRequest request)
+    [HttpPost("all_vendor_payment_methods")]
+    public async Task<IActionResult> GetPaymentMethods()
     {
-        _ = request;
-        var result = await _service.PostAsync("/payments/all_vendor_payment_methods", request);
+        var result = await _service.PostAsync("/payments/all_vendor_payment_methods", new { });
         return ApiResponseFactory.FromUpstream(result);
     }
 
-    [HttpPost("/vendors/new_vendor_account")]
+    [HttpPost("new_vendor_account")]
     public async Task<IActionResult> CreateVendorAccount([FromBody] NewVendorAccountRequest request)
     {
         var result = await _service.PostAsync("/vendors/new_vendor_account", request);
         return ApiResponseFactory.FromUpstream(result);
     }
-    [HttpPost("/vendors/update_vendor_account/{{vendorAccountId}}")]
-    public async Task<IActionResult> UpdateVendorAccount([FromBody] NewVendorAccountRequest request)
+    [HttpPost("update_vendor_account/{vendorAccountId}")]
+    public async Task<IActionResult> UpdateVendorAccount(string vendorAccountId, [FromBody] NewVendorAccountRequest request)
     {
-        var result = await _service.PostAsync("/vendors/update_vendor_account/{{vendorAccountId}}", request);
+        var result = await _service.PostAsync($"/vendors/update_vendor_account/{vendorAccountId}", request);
         return ApiResponseFactory.FromUpstream(result);
     }
 
-    [HttpPost("/vendors/pay_vendor")]
+    [HttpPost("pay_vendor")]
     public async Task<IActionResult> PayVendor([FromBody] PayVendorRequest request)
     {
         var result = await _service.PostAsync("/vendors/pay_vendor", request);

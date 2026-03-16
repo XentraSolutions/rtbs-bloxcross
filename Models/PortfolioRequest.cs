@@ -28,7 +28,6 @@ public class PortfolioWebhookSubscribeRequest
     [JsonPropertyName("eventType")]
     public string EventType { get; set; } = string.Empty;
 
-    [Required]
     [Url]
     [JsonPropertyName("callbackUrl")]
     public string CallbackUrl { get; set; } = string.Empty;

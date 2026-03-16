@@ -7,10 +7,12 @@ using System.Text.Json;
 public class PortfolioController : ControllerBase
 {
     private readonly IBloxService _service;
+    private readonly IBloxCredentialRepository _repository;
 
-    public PortfolioController(IBloxService service)
+    public PortfolioController(IBloxService service, IBloxCredentialRepository repository)
     {
         _service = service;
+        _repository = repository;
     }
 
     [HttpPost("get_portfolio_balances")]
@@ -38,6 +40,16 @@ public class PortfolioController : ControllerBase
     [HttpPost("webhooks/subscribe")]
     public async Task<IActionResult> SubscribePortfolioWebhook([FromBody] PortfolioWebhookSubscribeRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.CallbackUrl))
+        {
+            request.CallbackUrl = await _repository.GetSettingValueAsync("CALL_BACK_URL") ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CallbackUrl))
+        {
+            return ApiResponseFactory.Failure(400, "CALL_BACK_URL setting is missing.");
+        }
+
         var result = await _service.PostAsync("/portfolio/webhooks/subscribe", request);
         return UpstreamContent(result);
     }

@@ -8,6 +8,7 @@ public class BloxCredentialRepository : IBloxCredentialRepository
     private readonly IMemoryCache _cache;
 
     private const string CACHE_KEY = "BLOX_ACTIVE_CREDENTIAL";
+    private const string SETTING_CACHE_PREFIX = "BLOX_SETTING_";
 
     public BloxCredentialRepository(
         AppDbContext context,
@@ -36,5 +37,31 @@ public class BloxCredentialRepository : IBloxCredentialRepository
         _cache.Set(CACHE_KEY, result, TimeSpan.FromMinutes(10));
 
         return result;
+    }
+
+    public async Task<string?> GetSettingValueAsync(string settingCode)
+    {
+        if (string.IsNullOrWhiteSpace(settingCode))
+        {
+            return null;
+        }
+
+        var cacheKey = $"{SETTING_CACHE_PREFIX}{settingCode.Trim().ToUpperInvariant()}";
+        if (_cache.TryGetValue(cacheKey, out string? cached))
+        {
+            return cached;
+        }
+
+        var settingValue = await _context.Settings
+            .Where(x => x.SettingCode == settingCode)
+            .Select(x => x.SettingValue)
+            .FirstOrDefaultAsync();
+
+        if (!string.IsNullOrWhiteSpace(settingValue))
+        {
+            _cache.Set(cacheKey, settingValue, TimeSpan.FromMinutes(10));
+        }
+
+        return settingValue;
     }
 }
