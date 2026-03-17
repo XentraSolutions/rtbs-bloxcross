@@ -3,7 +3,11 @@ using Rtbs.Bloxcross.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddScoped<BloxInboundAuthFilter>();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<BloxInboundAuthFilter>();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -40,16 +44,52 @@ builder.Services.AddScoped<IWebhookService, WebhookService>();
 builder.Services.AddHttpClient<IBloxService, BloxService>();
 builder.Services.AddHttpContextAccessor();
 
-builder.Services.AddControllers();
-
 var app = builder.Build();
 
+app.UseStaticFiles();
 app.UseSwagger();
-app.UseSwaggerUI();
+app.UseSwaggerUI(options =>
+{
+    options.InjectJavascript("/swagger/swagger-auth.js");
+});
 
 app.UseHttpsRedirection();
 
 app.UseDeveloperExceptionPage();
+
+app.Use(async (context, next) =>
+{
+    if (BloxInboundAuthAutoFillMiddleware.ShouldAutoFill(context.Request))
+    {
+        var repository = context.RequestServices.GetRequiredService<IBloxCredentialRepository>();
+        await BloxInboundAuthAutoFillMiddleware.FillMissingHeadersAsync(context.Request, repository);
+    }
+
+    await next();
+});
 app.MapControllers();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/swagger/auth-headers", async (string method, string path, IBloxCredentialRepository repository) =>
+    {
+        var credential = await repository.GetActiveAsync();
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+        var normalizedPath = BloxHmacHelper.GetPathForSignature(path);
+        var signature = BloxHmacHelper.ComputeSignatureBase64(
+            credential.SecretKey,
+            timestamp,
+            method,
+            normalizedPath);
+
+        return Results.Json(new
+        {
+            apiKey = credential.ApiKey,
+            clientId = credential.ClientId,
+            timestamp,
+            signature
+        });
+    }).ExcludeFromDescription();
+}
 
 app.Run();

@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.Http;
-using MySqlConnector;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -24,19 +22,6 @@ public class BloxService : IBloxService
         _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
     }
 
-    private static string GenerateSignature(string base64SecretKey, string timestamp, string method, string path)
-    {
-        var message = $"{timestamp}{method}{path}";
-
-        var keyBytes = Convert.FromBase64String(base64SecretKey);
-
-        using var hmac = new HMACSHA256(keyBytes);
-
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
-
-        return Convert.ToBase64String(hash);
-    }
-
     private async Task AddHeaders(HttpRequestMessage request, string method, string path)
     {
         var credential = await _repository.GetActiveAsync();
@@ -45,10 +30,10 @@ public class BloxService : IBloxService
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
 
-        var signature = GenerateSignature(
+        var signature = BloxHmacHelper.ComputeSignatureBase64(
             credential.SecretKey,
             timestamp,
-            method.ToUpper(),
+            method,
             path
         );
 
@@ -90,7 +75,7 @@ public class BloxService : IBloxService
         try
         {
             var request = new HttpRequestMessage(method, path);
-            await AddHeaders(request, method.Method, path);
+            await AddHeaders(request, method.Method, BloxHmacHelper.GetPathForSignature(path));
 
             // Attach body only if present (POST/PUT/PATCH etc.)
             if (body != null)
@@ -102,15 +87,16 @@ public class BloxService : IBloxService
             }
 
             var response = await _httpClient.SendAsync(request);
+            var responseStatusCode = (int)response.StatusCode;
             content = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
                 error = $"Status: {response.StatusCode}, Response: {content}";
-                return (false, (int)response.StatusCode, content, error);
+                return (false, responseStatusCode, content, error);
             }
 
-            return (true, (int)response.StatusCode, content, null);
+            return (true, responseStatusCode, content, null);
         }
         catch (HttpRequestException httpEx)
         {
@@ -128,7 +114,8 @@ public class BloxService : IBloxService
             {
                 MethodName = $"{method.Method} {path}",
                 Parameters = body,
-                Response = string.IsNullOrWhiteSpace(content) ? error : content,
+                Response = content,
+                ErrorMessage = error,
                 IpAddress = ipAddress,
                 TraceId = traceId
             };
