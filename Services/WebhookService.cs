@@ -9,12 +9,18 @@ using System.Text.Json;
 public class WebhookService : IWebhookService
 {
     private readonly IConfiguration _config;
+    private readonly IBloxCredentialRepository _credentialRepository;
     private readonly AppDbContext _context;
     private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public WebhookService(IConfiguration config, AppDbContext context, IHttpContextAccessor httpContextAccessor)
+    public WebhookService(
+        IConfiguration config,
+        IBloxCredentialRepository credentialRepository,
+        AppDbContext context,
+        IHttpContextAccessor httpContextAccessor)
     {
         _config = config;
+        _credentialRepository = credentialRepository;
         _context = context;
         _httpContextAccessor = httpContextAccessor;
     }
@@ -32,7 +38,7 @@ public class WebhookService : IWebhookService
             };
         }
 
-        if (!TryGetWebhookHeaders(context, out var timestampHeader, out var signatureHeader))
+        if (!TryGetWebhookHeaders(context, out var clientIdHeader, out var apiKeyHeader, out var timestampHeader, out var signatureHeader))
         {
             return new WebhookValidationResult
             {
@@ -62,8 +68,33 @@ public class WebhookService : IWebhookService
             };
         }
 
-        var signatureSecretConfig = GetSignatureSecretKey();
-        if (string.IsNullOrWhiteSpace(signatureSecretConfig))
+        (string BaseUrl, string ClientId, string ApiKey, string SecretKey) credential;
+        try
+        {
+            credential = await _credentialRepository.GetActiveAsync();
+        }
+        catch (Exception ex)
+        {
+            return new WebhookValidationResult
+            {
+                IsValid = false,
+                ErrorMessage = $"Unable to load active Blox credential: {ex.Message}",
+                StatusCode = 500
+            };
+        }
+
+        if (!string.Equals(clientIdHeader, credential.ClientId, StringComparison.Ordinal) ||
+            !string.Equals(apiKeyHeader, credential.ApiKey, StringComparison.Ordinal))
+        {
+            return new WebhookValidationResult
+            {
+                IsValid = false,
+                ErrorMessage = "Invalid webhook authentication credentials.",
+                StatusCode = 401
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(credential.SecretKey))
         {
             return new WebhookValidationResult
             {
@@ -73,7 +104,7 @@ public class WebhookService : IWebhookService
             };
         }
 
-        var decryptSecretConfig = GetDecryptSecretKey(signatureSecretConfig);
+        var decryptSecretConfig = GetDecryptSecretKey(credential.SecretKey);
         if (string.IsNullOrWhiteSpace(decryptSecretConfig))
         {
             return new WebhookValidationResult
@@ -84,8 +115,8 @@ public class WebhookService : IWebhookService
             };
         }
 
-        var signatureKey = GetKeyBytes(signatureSecretConfig);
-        var decryptKey = GetKeyBytes(decryptSecretConfig);
+        var signatureKey = BloxHmacHelper.GetKeyBytes(credential.SecretKey);
+        var decryptKey = BloxHmacHelper.GetKeyBytes(decryptSecretConfig);
         var body = await ReadRequestBodyAsync(context);
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -207,20 +238,34 @@ public class WebhookService : IWebhookService
         }
     }
 
-    private bool TryGetWebhookHeaders(HttpContext context, out string timestampHeader, out string signatureHeader)
+    private bool TryGetWebhookHeaders(
+        HttpContext context,
+        out string clientIdHeader,
+        out string apiKeyHeader,
+        out string timestampHeader,
+        out string signatureHeader)
     {
+        clientIdHeader = string.Empty;
+        apiKeyHeader = string.Empty;
         timestampHeader = string.Empty;
         signatureHeader = string.Empty;
 
-        if (!context.Request.Headers.TryGetValue("X-TIMESTAMP", out var timestampValue) ||
-            !context.Request.Headers.TryGetValue("X-SIGNATURE", out var signatureValue))
+        if (!context.Request.Headers.TryGetValue(BloxInboundAuthSpec.ClientIdHeader, out var clientIdValue) ||
+            !context.Request.Headers.TryGetValue(BloxInboundAuthSpec.ApiKeyHeader, out var apiKeyValue) ||
+            !context.Request.Headers.TryGetValue(BloxInboundAuthSpec.TimestampHeader, out var timestampValue) ||
+            !context.Request.Headers.TryGetValue(BloxInboundAuthSpec.SignatureHeader, out var signatureValue))
         {
             return false;
         }
 
+        clientIdHeader = clientIdValue.ToString();
+        apiKeyHeader = apiKeyValue.ToString();
         timestampHeader = timestampValue.ToString();
         signatureHeader = signatureValue.ToString();
-        return true;
+        return !string.IsNullOrWhiteSpace(clientIdHeader) &&
+               !string.IsNullOrWhiteSpace(apiKeyHeader) &&
+               !string.IsNullOrWhiteSpace(timestampHeader) &&
+               !string.IsNullOrWhiteSpace(signatureHeader);
     }
 
     private static bool IsTimestampWithinAllowedWindow(string timestampHeader)
@@ -228,14 +273,6 @@ public class WebhookService : IWebhookService
         _ = long.TryParse(timestampHeader, out var timestampMs);
         var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestampMs);
         return Math.Abs((DateTimeOffset.UtcNow - timestamp).TotalMinutes) <= 5;
-    }
-
-    private string? GetSignatureSecretKey()
-    {
-        return _config["Webhook:SecretKey"]
-               ?? _config["BLOXCROSS:SecretKey"]
-               ?? _config["SECRET_KEY"]
-               ?? _config["WebhookSecret"];
     }
 
     private string? GetDecryptSecretKey(string? fallbackSignatureSecret)
@@ -255,7 +292,8 @@ public class WebhookService : IWebhookService
 
     private bool IsSignatureValid(HttpContext context, string timestampHeader, string signatureHeader, byte[] key)
     {
-        var message = $"{timestampHeader}{context.Request.Method.ToUpperInvariant()}{context.Request.Path}";
+        var signaturePath = BloxHmacHelper.GetPathForSignature($"{context.Request.PathBase}{context.Request.Path}");
+        var message = $"{timestampHeader}{context.Request.Method.ToUpperInvariant()}{signaturePath}";
         byte[] expectedHash;
         using (var hmac = new HMACSHA256(key))
         {
@@ -265,9 +303,9 @@ public class WebhookService : IWebhookService
         byte[] providedSig;
         try
         {
-            providedSig = ParseSignature(signatureHeader);
+            providedSig = BloxHmacHelper.ParseSignature(signatureHeader);
         }
-        catch
+        catch (FormatException)
         {
             return false;
         }
@@ -300,86 +338,5 @@ public class WebhookService : IWebhookService
         aes.Decrypt(iv, ciphertext, tag, plaintext);
 
         return Encoding.UTF8.GetString(plaintext);
-    }
-
-    private static byte[] ParseSignature(string signature)
-    {
-        try
-        {
-            return Convert.FromBase64String(signature);
-        }
-        catch
-        {
-        }
-
-        if (IsHexString(signature))
-        {
-            return HexToBytes(signature);
-        }
-
-        throw new FormatException("Unsupported signature encoding.");
-    }
-
-    private static bool IsHexString(string input)
-    {
-        if (string.IsNullOrEmpty(input) || input.Length % 2 != 0)
-        {
-            return false;
-        }
-
-        foreach (var c in input)
-        {
-            var isHex = (c >= '0' && c <= '9') ||
-                        (c >= 'a' && c <= 'f') ||
-                        (c >= 'A' && c <= 'F');
-            if (!isHex)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static byte[] HexToBytes(string hex)
-    {
-        var len = hex.Length / 2;
-        var bytes = new byte[len];
-        for (var i = 0; i < len; i++)
-        {
-            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
-        }
-
-        return bytes;
-    }
-
-    private static byte[] GetKeyBytes(string secret)
-    {
-        var normalized = secret.Trim();
-        try
-        {
-            var b = Convert.FromBase64String(normalized);
-            if (b.Length > 0)
-            {
-                return b;
-            }
-        }
-        catch
-        {
-        }
-
-        if (IsHexString(normalized))
-        {
-            try
-            {
-                return HexToBytes(normalized);
-            }
-            catch
-            {
-            }
-        }
-
-        var utf = Encoding.UTF8.GetBytes(normalized);
-        return utf;
     }
 }

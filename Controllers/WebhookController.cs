@@ -3,6 +3,7 @@ using System.Text.Json;
 
 [ApiController]
 [Route("api/[controller]")]
+[SkipBloxInboundAuth]
 public class WebhookController : ControllerBase
 {
     private readonly IWebhookService _webhookService;
@@ -25,28 +26,20 @@ public class WebhookController : ControllerBase
         {
             if (result.IsDuplicate)
             {
-                return new ContentResult
-                {
-                    StatusCode = result.StatusCode,
-                    ContentType = "application/json",
-                    Content = JsonSerializer.Serialize(new { success = true, duplicate = true })
-                };
+                return ApiResponseFactory.Success(
+                    result.StatusCode,
+                    "Webhook already processed.",
+                    new { duplicate = true });
             }
 
-            return new ContentResult
-            {
-                StatusCode = result.StatusCode,
-                ContentType = "application/json",
-                Content = JsonSerializer.Serialize(new { success = true, id = result.Log?.Id })
-            };
+            return ApiResponseFactory.Success(
+                result.StatusCode,
+                "Webhook processed successfully.",
+                new { id = result.Log?.Id });
         }
 
-        var payload = JsonSerializer.Serialize(new { error = result.ErrorMessage });
-        return new ContentResult
-        {
-            StatusCode = result.StatusCode,
-            ContentType = "application/json",
-            Content = payload
-        };
+        return ApiResponseFactory.Failure(
+            result.StatusCode,
+            result.ErrorMessage ?? "Webhook processing failed.");
     }
 }
